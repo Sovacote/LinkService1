@@ -1,6 +1,5 @@
 package Main;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -8,16 +7,20 @@ import com.sun.net.httpserver.HttpHandler;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.io.InputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.stream.Collectors;
 
-public class Main{
+
+
+public class Main {
 
     // Модель
     static class UrlLink {
@@ -57,7 +60,7 @@ public class Main{
             visitCount++;
         }
 
-        public UUID getUserId() {
+        public UUID getUsI() { // Переименованный метод
             return userId;
         }
     }
@@ -84,21 +87,29 @@ public class Main{
     // Контроллер
     static class LinkController implements HttpHandler {
         private final LinkRepository linkRepository = new LinkRepository();
-        private final ObjectMapper objectMapper = new ObjectMapper();
 
-        @Override
+
         public void handle(HttpExchange exchange) throws IOException {
             String response;
             int statusCode;
 
             try {
                 if ("POST".equals(exchange.getRequestMethod())) {
-                    String requestBody = new String(exchange.getRequestBody().readAllBytes());
-                    String longUrl = objectMapper.readTree(requestBody).get("longUrl").asText();
-                    UUID userId = UUID.randomUUID(); // Генерация UUID для пользователя
-                    String shortUrl = linkRepository.save(longUrl, userId);
-                    response = objectMapper.writeValueAsString(Map.of("shortUrl", shortUrl));
-                    statusCode = 200;
+                    // Чтение содержимого InputStream
+                    InputStream inputStream = exchange.getRequestBody();
+                    String requestBody = new BufferedReader(new InputStreamReader(inputStream))
+                            .lines().collect(Collectors.joining("\n"));
+
+                    String longUrl = extractLongUrl(requestBody);
+                    if (longUrl == null) { // Проверка на null
+                        response = "{\"error\": true, \"message\": \"longUrl не найден\"}";
+                        statusCode = 400; // Bad Request
+                    } else {
+                        UUID userId = UUID.randomUUID(); // Генерация UUID для пользователя
+                        String shortUrl = linkRepository.save(longUrl, userId);
+                        response = "{\"shortUrl\":\"" + shortUrl + "\"}";
+                        statusCode = 200;
+                    }
                 } else if ("GET".equals(exchange.getRequestMethod())) {
                     String shortUrl = "https://promo-z.ru" + exchange.getRequestURI().getPath();
                     UrlLink link = linkRepository.getUrlLink(shortUrl);
@@ -130,6 +141,22 @@ public class Main{
             os.write(response.getBytes());
             os.close();
         }
+
+
+        private String extractLongUrl(String requestBody) {
+            // Простейшая обработка JSON, извлечение longUrl
+            String longUrlKey = "\"longUrl\":\"";
+            int startIndex = requestBody.indexOf(longUrlKey);
+            if (startIndex == -1) {
+                return null; // Если ключ не найден, возвращаем null
+            }
+            startIndex += longUrlKey.length();
+            int endIndex = requestBody.indexOf("\"", startIndex);
+            if (endIndex == -1) {
+                return null; // Если закрывающая кавычка не найдена, возвращаем null
+            }
+            return requestBody.substring(startIndex, endIndex);
+        }
     }
 
     public static void main(String[] args) throws IOException {
@@ -142,6 +169,9 @@ public class Main{
         // Запуск фонового потока для очистки истекших ссылок
         ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
         scheduler.scheduleAtFixedRate(() -> {
+            // Используем ссылку на существующий репозиторий
+            // Важно: создаем новый объект LinkController, чтобы получить доступ к репозиторию
+            // Это может быть улучшено, если сделать репозиторий статическим или передать его в контроллер
             LinkController linkController = new LinkController();
             linkController.linkRepository.cleanExpiredLinks();
             System.out.println("Очистка истекших ссылок выполнена.");
