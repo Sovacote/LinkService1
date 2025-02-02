@@ -18,18 +18,16 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.stream.Collectors;
 
-
-
 public class Main {
 
     // Модель
     static class UrlLink {
-        private String longUrl;
-        private String shortUrl;
-        private int visitLimit;
+        private final String longUrl; // Сделано final
+        private final String shortUrl; // Сделано final
+        private final int visitLimit; // Сделано final
         private int visitCount;
         private long expirationTime;
-        private UUID userId;
+        private final UUID userId; // Сделано final
 
         public UrlLink(String longUrl, String shortUrl, int visitLimit, UUID userId) {
             this.longUrl = longUrl;
@@ -39,7 +37,6 @@ public class Main {
             this.expirationTime = System.currentTimeMillis() + TimeUnit.DAYS.toMillis(1); // 1 день
             this.userId = userId;
         }
-
 
         public String getLongUrl() {
             return longUrl;
@@ -61,7 +58,7 @@ public class Main {
             visitCount++;
         }
 
-        public UUID getUsI() { // Переименованный метод
+        public UUID getUserId() { // Переименованный метод
             return userId;
         }
     }
@@ -89,7 +86,6 @@ public class Main {
     static class LinkController implements HttpHandler {
         private final LinkRepository linkRepository = new LinkRepository();
 
-
         public void handle(HttpExchange exchange) throws IOException {
             String response;
             int statusCode;
@@ -109,7 +105,7 @@ public class Main {
                         UUID userId = UUID.randomUUID(); // Генерация UUID для пользователя
                         String shortUrl = linkRepository.save(longUrl, userId);
                         response = "{\"shortUrl\":\"" + shortUrl + "\"}";
-                        statusCode = 200;
+                        statusCode = 200; // OK
                     }
                 } else if ("GET".equals(exchange.getRequestMethod())) {
                     String shortUrl = "https://promo-z.ru" + exchange.getRequestURI().getPath();
@@ -122,11 +118,11 @@ public class Main {
                             exchange.getResponseHeaders().set("Location", link.getLongUrl());
                         } else {
                             response = "Ссылка недоступна.";
-                            statusCode = 404;
+                            statusCode = 404; // Not Found
                         }
                     } else {
                         response = "Не найдено";
-                        statusCode = 404;
+                        statusCode = 404; // Not Found
                     }
                 } else {
                     response = "Неподдерживаемый метод";
@@ -137,12 +133,12 @@ public class Main {
                 statusCode = 500; // Internal Server Error
             }
 
+            // Отправка ответа клиенту
             exchange.sendResponseHeaders(statusCode, response.length());
             OutputStream os = exchange.getResponseBody();
             os.write(response.getBytes());
             os.close();
         }
-
 
         private String extractLongUrl(String requestBody) {
             // Простейшая обработка JSON, извлечение longUrl
