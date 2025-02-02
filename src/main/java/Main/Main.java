@@ -40,6 +40,7 @@ public class Main {
             this.userId = userId;
         }
 
+        
         public String getLongUrl() {
             return longUrl;
         }
