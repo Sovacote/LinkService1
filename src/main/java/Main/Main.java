@@ -1,177 +1,171 @@
 package Main;
 
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-
+import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.io.InputStream;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.util.stream.Collectors;
 
+// Класс для загрузки конфигураций
+class ConfigLoader {
+    private Properties properties;
+
+    public ConfigLoader(String filePath) throws IOException {
+        properties = new Properties();
+        try (FileInputStream inputStream = new FileInputStream(filePath)) {
+            properties.load(inputStream);
+        }
+    }
+
+    public int getLinkLifetime() {
+        return Integer.parseInt(properties.getProperty("link.lifetime", "3600")); // Значение по умолчанию 3600 секунд
+    }
+
+    public int getLinkClickLimit() {
+        return Integer.parseInt(properties.getProperty("link.click.limit", "10")); // Значение по умолчанию 10 переходов
+    }
+}
+
+// Класс для представления ссылки
+class UrlLink {
+    private final String uuid;
+    private final String originalUrl;
+    private final String userId;
+    private final int lifetime;
+    private int clickLimit;
+    private int clickCount;
+    private final long creationTime;
+
+    public UrlLink(String originalUrl, String userId, int lifetime, int clickLimit) {
+        this.uuid = UUID.randomUUID().toString();
+        this.originalUrl = originalUrl;
+        this.userId = userId;
+        this.lifetime = lifetime;
+        this.clickLimit = clickLimit;
+        this.clickCount = 0;
+        this.creationTime = System.currentTimeMillis();
+    }
+
+    public String getUuid() {
+        return uuid;
+    }
+
+    public String getUserId() { // Исправлено имя метода
+        return userId;
+    }
+
+    public boolean isExpired() {
+        return (System.currentTimeMillis() - creationTime) > (lifetime * 1000);
+    }
+
+    public boolean canClick() {
+        return clickCount < clickLimit && !isExpired();
+    }
+
+    public void incrementClick() {
+        if (canClick()) {
+            clickCount++;
+        }
+    }
+
+    public void setClickLimit(int limit) {
+        this.clickLimit = limit;
+    }
+
+    public int getClickCount() {
+        return clickCount;
+    }
+
+    public String getOriginalUrl() {
+        return originalUrl; // Добавлен метод для получения оригинального URL
+    }
+}
+
+// Класс для управления ссылками
+class LinkRepository {
+    private final Map<String, UrlLink> links = new HashMap<>();
+
+    public void addLink(UrlLink link) {
+        links.put(link.getUuid(), link);
+    }
+
+    public boolean deleteLink(String uuid, String userId) {
+        UrlLink link = links.get(uuid);
+        if (link != null && link.getUserId().equals(userId)) { // Исправлено имя метода
+            links.remove(uuid);
+            return true;
+        }
+        notifyUser ("Вы не имеете прав для удаления этой ссылки.");
+        return false;
+    }
+
+    public boolean editLink(String uuid, String userId, int newClickLimit) {
+        UrlLink link = links.get(uuid);
+        if (link != null && link.getUserId().equals(userId)) { // Исправлено имя метода
+            link.setClickLimit(newClickLimit);
+            return true;
+        }
+        notifyUser ("Вы не имеете прав для редактирования этой ссылки.");
+        return false;
+    }
+
+    public void notifyUser (String message) {
+        // Здесь можно реализовать логику уведомления пользователя
+        System.out.println("Уведомление: " + message);
+    }
+
+    public UrlLink getLink(String uuid) {
+        return links.get(uuid);
+    }
+}
+
+// Основной класс
 public class Main {
+    public static void main(String[] args) {
+        try {
+            ConfigLoader configLoader = new ConfigLoader("config.properties");
+            int linkLifetime = configLoader.getLinkLifetime();
+            int linkClickLimit = configLoader.getLinkClickLimit();
 
-    // Модель
-    static class UrlLink {
-        private final String longUrl; // Сделано final
-        private final String shortUrl; // Сделано final
-        private final int visitLimit; // Сделано final
-        private int visitCount;
-        private long expirationTime;
-        private final UUID userId; // Сделано final
+            // Инициализация userId
+            String userId = "user123"; // Пример значения userId
 
-        public UrlLink(String longUrl, String shortUrl, int visitLimit, UUID userId) {
-            this.longUrl = longUrl;
-            this.shortUrl = shortUrl;
-            this.visitLimit = visitLimit;
-            this.visitCount = 0;
-            this.expirationTime = System.currentTimeMillis() + TimeUnit.DAYS.toMillis(1); // 1 день
-            this.userId = userId;
-        }
+            // Пример использования
+            LinkRepository linkRepository = new LinkRepository();
 
-        public String getLongUrl() {
-            return longUrl;
-        }
+            // Создание ссылки
+            UrlLink newLink = new UrlLink("http://example.com", userId, linkLifetime, linkClickLimit);
+            linkRepository.addLink(newLink);
+            System.out.println("Ссылка создана: " + newLink.getUuid());
 
-        public String getShortUrl() {
-            return shortUrl;
-        }
-
-        public boolean isExpired() {
-            return System.currentTimeMillis() > expirationTime;
-        }
-
-        public boolean canBeVisited() {
-            return visitCount < visitLimit && !isExpired();
-        }
-
-        public void incrementVisitCount() {
-            visitCount++;
-        }
-
-        public UUID getUserId() { // Переименованный метод
-            return userId;
-        }
-    }
-
-    // Репозиторий
-    static class LinkRepository {
-        private final Map<String, UrlLink> links = new ConcurrentHashMap<>();
-
-        public String save(String longUrl, UUID userId) {
-            String shortUrl = "https://promo-z.ru/" + UUID.randomUUID().toString(); // уникальный короткий URL
-            links.put(shortUrl, new UrlLink(longUrl, shortUrl, 5, userId)); // лимит переходов 5
-            return shortUrl;
-        }
-
-        public UrlLink getUrlLink(String shortUrl) {
-            return links.get(shortUrl);
-        }
-
-        public void cleanExpiredLinks() {
-            links.values().removeIf(UrlLink::isExpired);
-        }
-    }
-
-    // Контроллер
-    static class LinkController implements HttpHandler {
-        private final LinkRepository linkRepository = new LinkRepository();
-
-        public void handle(HttpExchange exchange) throws IOException {
-            String response;
-            int statusCode;
-
-            try {
-                if ("POST".equals(exchange.getRequestMethod())) {
-                    // Чтение содержимого InputStream
-                    InputStream inputStream = exchange.getRequestBody();
-                    String requestBody = new BufferedReader(new InputStreamReader(inputStream))
-                            .lines().collect(Collectors.joining("\n"));
-
-                    String longUrl = extractLongUrl(requestBody);
-                    if (longUrl == null) { // Проверка на null
-                        response = "{\"error\": true, \"message\": \"longUrl не найден\"}";
-                        statusCode = 400; // Bad Request
-                    } else {
-                        UUID userId = UUID.randomUUID(); // Генерация UUID для пользователя
-                        String shortUrl = linkRepository.save(longUrl, userId);
-                        response = "{\"shortUrl\":\"" + shortUrl + "\"}";
-                        statusCode = 200; // OK
-                    }
-                } else if ("GET".equals(exchange.getRequestMethod())) {
-                    String shortUrl = "https://promo-z.ru" + exchange.getRequestURI().getPath();
-                    UrlLink link = linkRepository.getUrlLink(shortUrl);
-                    if (link != null) {
-                        if (link.canBeVisited()) {
-                            link.incrementVisitCount();
-                            response = link.getLongUrl();
-                            statusCode = 302; // Перенаправление
-                            exchange.getResponseHeaders().set("Location", link.getLongUrl());
-                        } else {
-                            response = "Ссылка недоступна.";
-                            statusCode = 404; // Not Found
-                        }
-                    } else {
-                        response = "Не найдено";
-                        statusCode = 404; // Not Found
-                    }
-                } else {
-                    response = "Неподдерживаемый метод";
-                    statusCode = 405; // Method Not Allowed
-                }
-            } catch (Exception e) {
-                response = "Ошибка обработки запроса: " + e.getMessage();
-                statusCode = 500; // Internal Server Error
+            // Проверка, можно ли кликнуть по ссылке
+            UrlLink retrievedLink = linkRepository.getLink(newLink.getUuid());
+            if (retrievedLink != null && retrievedLink.canClick()) {
+                retrievedLink.incrementClick();
+                System.out.println("Клик по ссылке: " + retrievedLink.getOriginalUrl());
+            } else {
+                System.out.println("Ссылка недоступна для клика или истекла.");
             }
 
-            // Отправка ответа клиенту
-            exchange.sendResponseHeaders(statusCode, response.length());
-            OutputStream os = exchange.getResponseBody();
-            os.write(response.getBytes());
-            os.close();
-        }
+            // Повторное редактирование лимита переходов
+            linkRepository.editLink(newLink.getUuid(), userId, 3);
+            System.out.println("Лимит переходов изменен на: " + 3);
 
-        private String extractLongUrl(String requestBody) {
-            // Простейшая обработка JSON, извлечение longUrl
-            String longUrlKey = "\"longUrl\":\"";
-            int startIndex = requestBody.indexOf(longUrlKey);
-            if (startIndex == -1) {
-                return null; // Если ключ не найден, возвращаем null
+            // Проверка количества кликов
+            System.out.println("Количество кликов по ссылке: " + retrievedLink.getClickCount());
+
+            // Удаление ссылки
+            if (linkRepository.deleteLink(newLink.getUuid(), userId)) {
+                System.out.println("Ссылка успешно удалена.");
+            } else {
+                System.out.println("Не удалось удалить ссылку.");
             }
-            startIndex += longUrlKey.length();
-            int endIndex = requestBody.indexOf("\"", startIndex);
-            if (endIndex == -1) {
-                return null; // Если закрывающая кавычка не найдена, возвращаем null
-            }
-            return requestBody.substring(startIndex, endIndex);
+
+        } catch (IOException e) {
+            System.err.println("Ошибка загрузки конфигурации: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("Произошла ошибка: " + e.getMessage());
         }
-    }
-
-    public static void main(String[] args) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(8000), 0);
-        server.createContext("/", new LinkController());
-        server.setExecutor(null); // создает стандартный исполнитель
-        server.start();
-        System.out.println("Сервер запущен на порту 8000");
-
-        // Запуск фонового потока для очистки истекших ссылок
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
-        scheduler.scheduleAtFixedRate(() -> {
-            // Используем ссылку на существующий репозиторий
-            // Важно: создаем новый объект LinkController, чтобы получить доступ к репозиторию
-            // Это может быть улучшено, если сделать репозиторий статическим или передать его в контроллер
-            LinkController linkController = new LinkController();
-            linkController.linkRepository.cleanExpiredLinks();
-            System.out.println("Очистка истекших ссылок выполнена.");
-        }, 1, 1, TimeUnit.HOURS); // Очистка раз в час
     }
 }
